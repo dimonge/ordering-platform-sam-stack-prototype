@@ -1,0 +1,431 @@
+# This is the SAM template that represents the architecture of your serverless application
+# https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-template-basics.html
+
+# The AWSTemplateFormatVersion identifies the capabilities of the template
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/format-version-structure.html
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  genesis-platform
+
+# Transform section specifies one or more macros that AWS CloudFormation uses to process your template
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/transform-section-structure.html
+Transform:
+- AWS::Serverless-2016-10-31
+
+Globals:
+  Function: 
+    CodeUri: dist/handlers
+    Runtime: nodejs14.x
+    Tracing: Active            
+    Architectures:
+      - x86_64
+    MemorySize: 128
+    Timeout: 100  
+
+Parameters:
+  AppName:
+    Description: "Application name"
+    Type: String
+    Default: genesis-platform
+  EnvType:
+    Description: "Environment type (e.g dev, stag, prod)" 
+    Type: String
+    Default: dev 
+  DiamondDBVpcCIDR:
+    Description: "Please enter the IP range (CIDR notation) for this vpc"
+    Type: String
+    Default: 10.0.0.0/16
+  DiamondDBSubnet1CIDR:
+    Description: "Please enter the IP range for the subnet1 cidr" 
+    Type: String
+    Default: 10.0.1.0/24  
+  DiamondDBSubnet2CIDR:
+    Description: "Please enter the IP range for the subnet2 cidr" 
+    Type: String
+    Default: 10.0.2.0/24
+  DiamondDBPublicSubnet1CIDR:
+    Description: "Please enter the IP range for the subnet2 cidr" 
+    Type: String
+    Default: 10.0.3.0/24
+  DiamondDBPublicSubnet2CIDR:
+    Description: "Please enter the IP range for the subnet2 cidr" 
+    Type: String
+    Default: 10.0.4.0/24
+  DiamondDBClusterName:
+    Description: Diamond DB cluster name 
+    Type: String
+    Default: diamond-db-cluster
+  DiamondDatabaseName:
+    Description: Diamond database name
+    Type: String
+    Default: diamond_db
+  MasterDBUsername:
+    NoEcho: 'true'
+    Description: Username for the Diamond stack postgresql database
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+    Default: adminuser12
+
+# Resources declares the AWS resources that you want to include in the stack
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resources-section-structure.html
+Resources:
+  # Each Lambda function is defined by properties:
+  # https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    
+  DiamondDBVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref DiamondDBVpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  DiamondInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  DiamondVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref DiamondDBVpc
+      InternetGatewayId: !Ref DiamondInternetGateway
+
+  DiamondDBSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref DiamondDBSubnet1CIDR
+      VpcId: !Ref DiamondDBVpc
+      AvailabilityZone: 'eu-west-1a'
+
+  DiamondPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DiamondDBVpc
+    
+  DiamondPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: DiamondVpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref DiamondPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref DiamondInternetGateway
+
+  DiamondPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref DiamondDBPublicSubnet1CIDR
+      VpcId: !Ref DiamondDBVpc
+      AvailabilityZone: 'eu-west-1c'
+      MapPublicIpOnLaunch: true
+
+  DiamondPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref DiamondDBPublicSubnet2CIDR
+      VpcId: !Ref DiamondDBVpc
+      AvailabilityZone: 'eu-west-1b'
+      MapPublicIpOnLaunch: true
+
+  diamondDBPublicSubnet1RouteTableAssociation: 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref DiamondPublicRouteTable
+      SubnetId: !Ref DiamondPublicSubnet1
+
+  diamondDBPublicSubnet2RouteTableAssociation: 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: DiamondPublicRouteTable
+    Properties:
+      RouteTableId: !Ref DiamondPublicRouteTable
+      SubnetId: !Ref DiamondPublicSubnet2
+
+  DiamondDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Cloudformation managed DB Subnet group
+      SubnetIds:
+        - !Ref DiamondDBSubnet1
+        - !Ref DiamondPublicSubnet1
+        - !Ref DiamondPublicSubnet2
+
+  DiamondDBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvType}-DiamondDBUserSecret"
+      Description: RDS database auto-generated user password
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username": "${MasterDBUsername}"}'
+        GenerateStringKey: "password"
+        PasswordLength: 30
+        ExcludeCharacters: '"@/\'
+      Tags:
+        - 
+          Key: AppName
+          Value: !Ref AppName
+
+  DiamondRDSCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref DiamondDBSecret, ':SecretString:username}}']]
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref DiamondDBSecret, ':SecretString:password}}']]
+      DBClusterIdentifier: !Ref DiamondDBClusterName
+      DatabaseName: !Ref DiamondDatabaseName
+      Engine: aurora-postgresql
+      EngineMode: serverless
+      EngineVersion: 10.7
+      DeletionProtection: false
+      ScalingConfiguration:
+        AutoPause: true
+        MaxCapacity: 4
+        MinCapacity: 2
+        SecondsUntilAutoPause: 1000
+      DBSubnetGroupName: 
+        Ref: DiamondDBSubnetGroup
+  GenesisStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      RetentionPeriodHours: 24
+      ShardCount: 1
+  
+  # Diamond Stack
+  
+  # Diamond SQS Queue
+  DiamondSQSQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      QueueName: DiamondSQSQueue.fifo
+      VisibilityTimeout: 150
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+            - "DiamondSQSQueueDLP"
+            - "Arn"
+        maxReceiveCount: 5
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  # DLQ for diamond sqs queue
+  DiamondSQSQueueDLP:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      QueueName: DiamondSQSQueueDLP.fifo
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  # Partner graphql API
+  PartnerCommandApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      Name: "PartnerCommandApi"
+      AuthenticationType: "API_KEY"
+      XrayEnabled: true
+  # Partner graphql ApiKey
+  PartnerCommandApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt PartnerCommandApi.ApiId
+  
+  # Asset tracking API
+  AssetTrackingCommandApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      Name: "AssetTrackingCommandApi"
+      AuthenticationType: "API_KEY"
+      XrayEnabled: true
+      
+  AssetTrackingCommandApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt AssetTrackingCommandApi.ApiId
+
+  # Partner Api schema
+  PartnerCommandApiSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties: 
+      ApiId: !GetAtt PartnerCommandApi.ApiId
+      Definition: |
+        schema {
+          mutation: Mutation
+          query: Query
+        }
+
+        type Event {
+          data: AWSJSON
+          type: String
+        }
+
+        input EventInput {
+          data: AWSJSON!
+          type: String!
+        }
+        type Mutation {
+          writeEvent(event: EventInput!): Event
+        }
+        type Query {
+          readEvent(eventId: String!): Event
+        }
+
+  # Partner Lambda function for Data source
+  PartnerCommandFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: partner-command.handler      
+      Description: Partner Command function for creating events
+      Environment:
+        Variables:
+          STREAM_NAME: !Ref GenesisStream
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AmazonKinesisFullAccess
+  
+  PartnerProcessGenesisFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: partner-process-genesis.handler
+      Description: Partner process function that consumes genesis stream and sends it to diamond stack sqs
+      Policies:
+        - AmazonKinesisFullAccess
+        - AWSLambdaBasicExecutionRole
+        - AmazonSQSFullAccess
+      Environment:
+        Variables:
+          SAVE_DATA_QUEUE_URL: !Ref DiamondSQSQueue
+      Events:
+        Stream:
+          Type: Kinesis
+          Properties:
+            Stream: !GetAtt GenesisDiamondStackConsumer.ConsumerARN
+            StartingPosition: LATEST
+            BatchSize: 100
+  
+  SaveSQSTransactionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: save-sqs-transaction.handler
+      Description: Save Partner data that is coming from DiamondSQSQueue into DiamondDB-Postgresql
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AmazonSQSFullAccess
+        - AmazonRDSDataFullAccess
+        - AmazonRDSFullAccess
+      Environment:
+        Variables:
+          DIAMOND_DB_NAME: !Ref DiamondDatabaseName
+      Events:
+        DiamondSQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt DiamondSQSQueue.Arn
+            BatchSize: 10
+
+
+
+  # Service role
+  partnerCommandServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+      Path: "/"
+      
+  lambdaAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: lambdaAccessPolicy
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: 
+              - lambda:invokeFunction
+            Resource:
+              - !GetAtt PartnerCommandFunction.Arn          
+      Roles:
+        - Ref: "partnerCommandServiceRole"
+  
+  genesisKinesisAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: genesisKinesisAccessPolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - kinesis:Describe*
+              - kinesis:Put*
+              - kinesis:Get*
+              - kinesis:List*
+            Resource:
+              - !GetAtt PartnerCommandFunction.Arn
+      Roles:
+        - Ref: "partnerCommandServiceRole"
+
+  # Data source     
+  partnerCommandDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt PartnerCommandApi.ApiId
+      Description: "Partner app data source"
+      Name: "PartnerCommand"
+      Type: "AWS_LAMBDA"
+      ServiceRoleArn: !GetAtt partnerCommandServiceRole.Arn
+      LambdaConfig: 
+        LambdaFunctionArn: !GetAtt PartnerCommandFunction.Arn
+
+  # resolver
+  partnerCommandReadResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt PartnerCommandApi.ApiId
+      TypeName: Query
+      FieldName: readEvent
+      DataSourceName: !GetAtt partnerCommandDataSource.Name
+
+  partnerCommandWriteResolver:
+    Type: AWS::AppSync::Resolver
+    Properties: 
+      ApiId: !GetAtt PartnerCommandApi.ApiId
+      TypeName: Mutation
+      FieldName: writeEvent
+      DataSourceName: !GetAtt partnerCommandDataSource.Name
+
+  # Lambda consumer for Datasource stack
+  GenesisDiamondStackConsumer:
+    Type: AWS::Kinesis::StreamConsumer
+    Properties:
+      ConsumerName: GenesisDiamondStackConsumer
+      StreamARN: !GetAtt GenesisStream.Arn
+
+  # Lambda consumer for invoice stack
+
+  # S3 for storing the event logs
+#  GenesisStreamS3Consumer:
+#    Type: AWS::Kinesis::StreamConsumer
+    #Properties:
+     # ConsumerName: GenesisStreamS3Consumer
+#      StreamARN: !GetAtt GenesisStream.Arn
+
+Outputs:
+  PartnerCommandApi:
+    Description: "Partner command api"
+    Value: !GetAtt PartnerCommandApi.Arn
+  PartnerCommandApiKey:
+    Description: "Partner command api key"
+    Value: !GetAtt PartnerCommandApiKey.Arn
+  PartnerCommandGraphQLUrl:
+    Description: "Partner command graphql url"
+    Value: !GetAtt PartnerCommandApi.GraphQLUrl
+  GenesisStream:
+    Description: "Genesis stream"
+    Value: !GetAtt GenesisStream.Arn

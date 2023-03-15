@@ -1,0 +1,13 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "genesis-platform"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-1k6inn05zw8au"
+s3_prefix = "genesis-platform"
+region = "eu-west-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+image_repositories = []
+disable_rollback = true
+parameter_overrides = "AppName=\"genesis-platform\" EnvType=\"dev\" DiamondDBVpcCIDR=\"10.0.0.0/16\" DiamondDBSubnet1CIDR=\"10.0.1.0/24\" DiamondDBSubnet2CIDR=\"10.0.2.0/24\" DiamondDBPublicSubnet1CIDR=\"10.0.3.0/24\" DiamondDBPublicSubnet2CIDR=\"10.0.4.0/24\" DiamondDBClusterName=\"diamond-db-cluster\" DiamondDatabaseName=\"diamond_db\""

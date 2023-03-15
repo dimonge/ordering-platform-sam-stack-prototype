@@ -1,0 +1,33 @@
+{
+    "name": "genesis-platform",
+    "description": "Initial Platform for building the sam stack for modeliver",
+    "version": "0.0.1",
+    "private": true,
+    "devDependencies": {
+        "@types/aws-lambda": "^8.10.92",
+        "@types/jest": "^26.0.10",
+        "@types/lodash": "^4.14.178",
+        "@types/node": "^17.0.17",
+        "@types/uuid": "^8.3.3",
+        "aws-sdk": "^2.1046.0",
+        "jest": "^26.6.3",
+        "ts-jest": "^26.2.0",
+        "ts-node": "^9.0.0",
+        "typescript": "^4.5.5"
+    },
+    "scripts": {
+        "test": "jest",
+        "build": "tsc",
+        "watch": "tsc -w",
+        "package": "npm run build && sam build && sam deploy",
+        "destroy": "sam delete"
+    },
+    "files": [
+        "dist/"
+    ],
+    "dependencies": {
+        "ajv": "^8.10.0",
+        "lodash": "^4.17.21",
+        "uuid": "^8.3.2"
+    }
+}
